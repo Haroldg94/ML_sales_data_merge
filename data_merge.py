@@ -48,13 +48,48 @@ def get_activities_df(df):
     return df
 
 
+def get_col_idx(df, col):
+    return df.columns.tolist().index(col)
+
+
+def get_idx_list(df):
+    return df.index.tolist()
+
+
 def populate_missing_fields(main_df, support_df):
+    # Populate the missing marketplace fee amount on the main_df using the support_df and fix the net received amount
     df_filter = (main_df['marketplace_fee'] == 0) & (main_df['operation_type'] != 'shipping')
     supp_df_cols = ['SOURCE_ID', 'FEE_AMOUNT', 'SETTLEMENT_NET_AMOUNT']
     main_df = main_df.merge(right=support_df.loc[support_df['TRANSACTION_TYPE'] != 'REFUND', supp_df_cols],
                             how='left', left_on='operation_id', right_on='SOURCE_ID')
     main_df.loc[df_filter, 'net_received_amount'] = main_df.loc[df_filter, 'SETTLEMENT_NET_AMOUNT']
     main_df.loc[df_filter, 'marketplace_fee'] = main_df.loc[df_filter, 'FEE_AMOUNT'] * -1
+    # Populating the missing shipping cost paid by the seller
+    seller_shipping_list = main_df.loc[main_df['operation_type'] == 'shipping', 'external_reference'].tolist()
+    df1 = main_df.loc[main_df['external_reference'].isin(seller_shipping_list), :]
+    df2 = df1.loc[df1['operation_type'] != 'shipping', :]
+    # df with the dataframe in which I need to update the shipping cost
+    shipping_to_update = df2.loc[~df2.duplicated(subset=['external_reference', 'operation_type', 'shipping_cost']), :]
+    # df that have the shipping cost values
+    new_shipping_val = main_df.loc[main_df['operation_type'] == 'shipping', :]
+    # Put the new shipping cost
+    main_df.iloc[get_idx_list(shipping_to_update),
+                 get_col_idx(shipping_to_update, 'shipping_cost')] = main_df.iloc[get_idx_list(new_shipping_val),
+                                                                                  get_col_idx(new_shipping_val,
+                                                                                              'shipping_cost')]
+
+    # Compute again the net received amount considering the shipping cost we just added
+    main_df.iloc[get_idx_list(shipping_to_update),
+                 get_col_idx(shipping_to_update,
+                             'net_received_amount')] = main_df.iloc[get_idx_list(shipping_to_update),
+                                                                    get_col_idx(shipping_to_update,
+                                                                                'net_received_amount')] - \
+                                                       main_df.iloc[get_idx_list(shipping_to_update),
+                                                                    get_col_idx(shipping_to_update,
+                                                                                'shipping_cost')]
+
+    main_df.drop(index=new_shipping_val.index.tolist(), inplace=True)
+    main_df.drop(columns=supp_df_cols, inplace=True)
 
     return main_df
 
@@ -106,13 +141,15 @@ def main():
             except Exception as ex:
                 logger.error(traceback.format_exc())
 
-        populate_missing_fields(main_df=activities_collection, support_df=settlement_report)
-
-        logger.debug('Populating the missing marketplace fees')
-        activities_collection = populate_missing_fields(activities_collection, settlement_report)
-        logger.debug('Adding the taxes column')
-        activities_collection = add_taxes_col(activities_collection)
-        activities_collection.to_excel('test.xlsx')
+        try:
+            logger.debug('Adding the taxes column')
+            activities_collection = add_taxes_col(activities_collection)
+            logger.debug('Populating the missing marketplace fees')
+            activities_collection = populate_missing_fields(activities_collection, settlement_report)
+            activities_collection.to_excel('test.xlsx')
+        except Exception as ex:
+            logger.error(ex)
+            logger.error(traceback.format_exc())
 
     logger.info('Data processing is done')
 
