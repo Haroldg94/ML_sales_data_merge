@@ -72,7 +72,7 @@ def populate_missing_fields(main_df, support_df):
     shipping_to_update = df2.loc[~df2.duplicated(subset=['external_reference', 'operation_type', 'shipping_cost']), :]
     # df that have the shipping cost values
     new_shipping_val = main_df.loc[main_df['operation_type'] == 'shipping', :]
-    # Put the new shipping cost
+    # Add the new shipping cost
     main_df.iloc[get_idx_list(shipping_to_update),
                  get_col_idx(shipping_to_update, 'shipping_cost')] = main_df.iloc[get_idx_list(new_shipping_val),
                                                                                   get_col_idx(new_shipping_val,
@@ -87,9 +87,12 @@ def populate_missing_fields(main_df, support_df):
                                                        main_df.iloc[get_idx_list(shipping_to_update),
                                                                     get_col_idx(shipping_to_update,
                                                                                 'shipping_cost')]
-
+    # Dropping the rows and columns that we don't need anymore
     main_df.drop(index=new_shipping_val.index.tolist(), inplace=True)
     main_df.drop(columns=supp_df_cols, inplace=True)
+    # For the sales that have repeated the shipping_cost value we need to left just one for each sale
+    main_df.loc[main_df.duplicated(subset=['order_id', 'shipping_cost'],
+                                   keep='first') & (main_df['shipping_cost'] > 0), 'shipping_cost'] = 0
 
     return main_df
 
@@ -98,6 +101,21 @@ def add_taxes_col(df):
     df['taxes_head'] = df['transaction_amount'] - df['marketplace_fee'] - df['shipping_cost'] - df['coupon_fee'] - \
                        df['net_received_amount']
     return df
+
+
+def add_quantities(main_df, support_df):
+    # Merging our main dataframe with the sales dataframe to get the quantity sold in each sale
+    main_df = main_df.merge(right=support_df.loc[:, ['# de venta', '# de publicación', 'Unidades']],
+                            how='left',
+                            left_on=['order_id', 'item_id'],
+                            right_on=['# de venta', '# de publicación'])
+    # Dropping the support columns
+    main_df.drop(columns=['# de venta', '# de publicación'], inplace=True)
+    # Renaming the quantity column and filling the null values
+    main_df.rename(columns={'Unidades': 'quantity'}, inplace=True)
+    main_df['quantity'].fillna(value=0, inplace=True)
+
+    return main_df
 
 
 def main():
@@ -125,7 +143,10 @@ def main():
             logger.debug(f'Processing {file} file')
             try:
                 if file.split('.')[-1] == 'xlsx':
-                    temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl')
+                    if file.startswith(files_names_start_list[3]):
+                        temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=3)
+                    else:
+                        temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl')
                 elif file.split('.')[-1] == 'csv':
                     temp = pd.read_csv(os.path.join(input_files_path, file))
 
@@ -142,11 +163,13 @@ def main():
                 logger.error(traceback.format_exc())
 
         try:
-            logger.debug('Adding the taxes column')
-            activities_collection = add_taxes_col(activities_collection)
             logger.debug('Populating the missing marketplace fees')
             activities_collection = populate_missing_fields(activities_collection, settlement_report)
-            activities_collection.to_excel('test.xlsx')
+            logger.debug('Adding the quantities sold for each product')
+            activities_collection = add_quantities(activities_collection, ventas_co)
+            logger.debug('Adding the taxes column')
+            activities_collection = add_taxes_col(activities_collection)
+            activities_collection.to_excel('test.xlsx', index=False)
         except Exception as ex:
             logger.error(ex)
             logger.error(traceback.format_exc())
