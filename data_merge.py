@@ -16,7 +16,7 @@ fh.setFormatter(formater)
 logger.addHandler(fh)
 
 
-def get_activities_df(df):
+def get_activities_df(df, file_date):
     filter_columns = ['Fecha de compra (date_created)',
                       'Identificador de producto (item_id)',
                       'Descripción de la operación (reason)',
@@ -48,6 +48,7 @@ def get_activities_df(df):
     df['date_created'] = pd.to_datetime(df['date_created'], format='%d/%m/%Y %H:%M:%S')
     df['time_created'] = df['date_created'].dt.time
     df['date_created'] = df['date_created'].dt.date
+    df['file_date'] = file_date.date()
     return df
 
 
@@ -159,6 +160,22 @@ def main():
     logger.info('Start data processing program')
     working_path = os.getcwd()
     input_files_path = working_path + '/BI'
+    archive_path = input_files_path + '/archive'
+
+    month_dict = {
+        'enero': '01',
+        'febrero': '02',
+        'marzo': '03',
+        'abril': '04',
+        'mayo': '05',
+        'junio': '06',
+        'julio': '07',
+        'agosto': '08',
+        'septiembre': '09',
+        'octubre': '10',
+        'noviembre': '11',
+        'diciembre': '12'
+    }
 
     files_names_start = {'activities-collection': 'xlsx',
                          'settlement-report': 'xlsx',
@@ -189,13 +206,24 @@ def main():
 
                 # Assigning the temp dataframe to the corresponding dataframe considering the filename
                 if file.startswith(files_names_start_list[0]):
-                    activities_collection = get_activities_df(temp)
+                    file_date = datetime.strptime(re.findall(r'-([0-9]{14})-', file)[0], '%Y%m%d%H%M%S')
+                    date = file_date.strftime('%Y%m%d')
+                    activities_collection = get_activities_df(temp, file_date)
+                    activities = True
                 elif file.startswith(files_names_start_list[1]):
+                    date = ''.join(re.findall(r'-([0-9]{4})-([0-9]{2})-([0-9]{2})', file)[0])
                     settlement_report = temp
+                    settlement = True
                 elif file.startswith(files_names_start_list[2]):
+                    date = datetime.strptime(''.join(re.findall(r'_([0-9]{2})-([0-9]{2})-([0-9]{4})_', file)[0]),
+                                             '%d%m%Y').strftime('%Y%m%d')
                     stock_general_full = temp
+                    stock_full = True
                 elif file.startswith(files_names_start_list[3]):
+                    date = re.findall(r'_([0-9]{2})_de_([a-z]{3,10})_de_([0-9]{4})',file)[0]
+                    date = date[2] + month_dict[date[1]] + date[0]
                     ventas_co = temp
+                    ventas = True
             except Exception as ex:
                 logger.error(traceback.format_exc())
 
