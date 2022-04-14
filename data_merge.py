@@ -45,6 +45,9 @@ def get_activities_df(df):
     # Setting the values of some columns to be positive
     df[['marketplace_fee', 'shipping_cost', 'coupon_fee']] = df[
         ['marketplace_fee', 'shipping_cost', 'coupon_fee']].apply(lambda x: -1 * x)
+    df['date_created'] = pd.to_datetime(df['date_created'], format='%d/%m/%Y %H:%M:%S')
+    df['time_created'] = df['date_created'].dt.time
+    df['date_created'] = df['date_created'].dt.date
     return df
 
 
@@ -118,6 +121,40 @@ def add_quantities(main_df, support_df):
     return main_df
 
 
+def generate_aux_file(df):
+    tr_list = ['transaction_amount', 'marketplace_fee', 'shipping_cost', 'coupon_fee', 'net_received_amount',
+               'amount_refunded', 'taxes_head']
+    df1 = df.drop(columns=tr_list[1:])
+    df1.rename(columns={tr_list[0]: 'amount'}, inplace=True)
+    df1['transaction_type'] = tr_list[0]
+    df2 = df.drop(columns=tr_list[0])
+    df2 = df2.drop(columns=tr_list[2:])
+    df2.rename(columns={tr_list[1]: 'amount'}, inplace=True)
+    df2['transaction_type'] = tr_list[1]
+    df3 = df.drop(columns=tr_list[0:2])
+    df3 = df3.drop(columns=tr_list[3:])
+    df3.rename(columns={tr_list[2]: 'amount'}, inplace=True)
+    df3['transaction_type'] = tr_list[2]
+    df4 = df.drop(columns=tr_list[0:3])
+    df4 = df4.drop(columns=tr_list[4:])
+    df4.rename(columns={tr_list[3]: 'amount'}, inplace=True)
+    df4['transaction_type'] = tr_list[3]
+    df5 = df.drop(columns=tr_list[0:4])
+    df5 = df5.drop(columns=tr_list[5:])
+    df5.rename(columns={tr_list[4]: 'amount'}, inplace=True)
+    df5['transaction_type'] = tr_list[4]
+    df6 = df.drop(columns=tr_list[0:5])
+    df6 = df6.drop(columns=tr_list[6])
+    df6.rename(columns={tr_list[5]: 'amount'}, inplace=True)
+    df6['transaction_type'] = tr_list[5]
+    df7 = df.drop(columns=tr_list[0:6])
+    df7.rename(columns={tr_list[6]: 'amount'}, inplace=True)
+    df7['transaction_type'] = tr_list[6]
+
+    final_df = pd.concat([df1, df2, df3, df4, df5, df6, df7], axis=0)
+    return final_df
+
+
 def main():
     logger.info('Start data processing program')
     working_path = os.getcwd()
@@ -169,11 +206,16 @@ def main():
             activities_collection = add_quantities(activities_collection, ventas_co)
             logger.debug('Adding the taxes column')
             activities_collection = add_taxes_col(activities_collection)
-            activities_collection.to_excel('test.xlsx', index=False)
+            logger.debug('Generating Auxiliary File')
+            aux_file = generate_aux_file(activities_collection)
+            activities_collection.to_excel('main_data.xlsx', index=False)
+            aux_file.to_excel('consolidated_data.xlsx', index=False)
+
         except Exception as ex:
             logger.error(ex)
             logger.error(traceback.format_exc())
-
+    else:
+        logger.debug('There are no files to process')
     logger.info('Data processing is done')
 
 
