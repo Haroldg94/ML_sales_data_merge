@@ -156,11 +156,25 @@ def generate_aux_file(df):
     return final_df
 
 
+def archive(input_files_path, archive_path, file_date, file_name):
+    destination_folder_path = os.path.join(archive_path, file_date)
+    if not os.path.isdir(archive_path):
+        os.mkdir(archive_path)
+
+    if not os.path.isdir(destination_folder_path):
+        os.mkdir(destination_folder_path)
+
+    shutil.copy(os.path.join(input_files_path, file_name), destination_folder_path)
+    #shutil.move(os.path.join(input_files_path, file_name), destination_folder_path)
+
+
 def main():
     logger.info('Start data processing program')
+    data_folder = 'BI'
+    archive_data = 'Archive'
     working_path = os.getcwd()
-    input_files_path = working_path + '/BI'
-    archive_path = input_files_path + '/archive'
+    input_files_path = os.path.join(working_path, data_folder)
+    archive_path = os.path.join(input_files_path, archive_data)
 
     month_dict = {
         'enero': '01',
@@ -211,19 +225,24 @@ def main():
                     activities_collection = get_activities_df(temp, file_date)
                     activities = True
                 elif file.startswith(files_names_start_list[1]):
-                    date = ''.join(re.findall(r'-([0-9]{4})-([0-9]{2})-([0-9]{2})', file)[0])
+                    date = datetime.strptime(''.join(re.findall(r'-([0-9]{4})-([0-9]{2})-([0-9]{1,2})', file)[0]),
+                                             '%Y%m%d').strftime('%Y%m%d')
                     settlement_report = temp
                     settlement = True
                 elif file.startswith(files_names_start_list[2]):
-                    date = datetime.strptime(''.join(re.findall(r'_([0-9]{2})-([0-9]{2})-([0-9]{4})_', file)[0]),
+                    date = datetime.strptime(''.join(re.findall(r'_([0-9]{1,2})-([0-9]{2})-([0-9]{4})_', file)[0]),
                                              '%d%m%Y').strftime('%Y%m%d')
                     stock_general_full = temp
                     stock_full = True
                 elif file.startswith(files_names_start_list[3]):
-                    date = re.findall(r'_([0-9]{2})_de_([a-z]{3,10})_de_([0-9]{4})',file)[0]
-                    date = date[2] + month_dict[date[1]] + date[0]
+                    date = re.findall(r'_([0-9]{1,2})_de_([a-z]{3,10})_de_([0-9]{4})',file)[0]
+                    date = datetime.strptime(date[2]+month_dict[date[1]]+date[0], '%Y%m%d').strftime('%Y%m%d')
                     ventas_co = temp
                     ventas = True
+
+                # Moving the current file to an archive
+                archive(input_files_path, archive_path, date, file)
+
             except Exception as ex:
                 logger.error(traceback.format_exc())
 
