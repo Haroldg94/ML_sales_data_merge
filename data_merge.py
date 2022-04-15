@@ -49,6 +49,9 @@ def get_activities_df(df, file_date):
     df['time_created'] = df['date_created'].dt.time
     df['date_created'] = df['date_created'].dt.date
     df['file_date'] = file_date.date()
+    df['marketplace'] = 'Mercadolibre'
+    df = df.astype({'external_reference': object, 'item_id': object, 'SKU': object, 'operation_id': object,
+                    'order_id': object})
     return df
 
 
@@ -122,7 +125,7 @@ def add_quantities(main_df, support_df):
     return main_df
 
 
-def generate_aux_file(df):
+def generate_aux_data(df):
     tr_list = ['transaction_amount', 'marketplace_fee', 'shipping_cost', 'coupon_fee', 'net_received_amount',
                'amount_refunded', 'taxes_head']
     df1 = df.drop(columns=tr_list[1:])
@@ -156,7 +159,7 @@ def generate_aux_file(df):
     return final_df
 
 
-def archive(input_files_path, archive_path, file_date, file_name):
+def do_archive(input_files_path, archive_path, file_date, file_name):
     destination_folder_path = os.path.join(archive_path, file_date)
     if not os.path.isdir(archive_path):
         os.mkdir(archive_path)
@@ -168,13 +171,45 @@ def archive(input_files_path, archive_path, file_date, file_name):
     #shutil.move(os.path.join(input_files_path, file_name), destination_folder_path)
 
 
+def open_excel(excel_path):
+    saved_data = pd.read_excel(excel_path)
+    return saved_data
+
+
+def indentify_new_sales(historical_df, new_df, src_col, trg_col):
+    new_df = new_df.loc[~new_df[trg_col].isin(historical_df[src_col]), :]
+    return new_df
+
+
+def fix_refunded_sales(df):
+    df.loc[df['amount_refunded'] != 0,
+           ['marketplace_fee', 'shipping_cost', 'coupon_fee', 'net_received_amount', 'taxes_head']] = 0
+    df.loc[df['amount_refunded'] != 0, 'amount_refunded'] = df.loc[df['amount_refunded'] != 0, 'transaction_amount']
+    return df
+
+
 def main():
     logger.info('Start data processing program')
     data_folder = 'BI'
+    main_data_file = 'main_data.xlsx'
+    consolidated_file = 'consolidated_data.xlsx'
+    inventory_file = 'total_inventory.xlsx'
     archive_data = 'Archive'
     working_path = os.getcwd()
     input_files_path = os.path.join(working_path, data_folder)
     archive_path = os.path.join(input_files_path, archive_data)
+    historical_path = os.path.join(working_path, main_data_file)
+    consolidated_path = os.path.join(working_path, consolidated_file)
+    inventory_path = os.path.join(working_path, inventory_file)
+    c_activities = 0
+    c_settle = 0
+    c_sales = 0
+    activities = False
+    ventas = False
+    settlement = False
+    stock_casa = False
+    stock_full = False
+    archive = False
 
     month_dict = {
         'enero': '01',
@@ -194,7 +229,8 @@ def main():
     files_names_start = {'activities-collection': 'xlsx',
                          'settlement-report': 'xlsx',
                          'Stock_general_Full': 'xlsx',
-                         'Ventas_CO': 'xlsx'}
+                         'Ventas_CO': 'xlsx',
+                         'Inventario MELI (CASA)': 'xlsx'}
 
     # Getting the files in the input file directory
     files_in_path = [f for f in os.listdir(input_files_path) if os.path.isfile(os.path.join(input_files_path, f))]
@@ -207,11 +243,21 @@ def main():
     logger.debug(f'Found {len(files_to_load)} files to process')
     if len(files_to_load) > 0:
         files_names_start_list = list(files_names_start.keys())
+        if os.path.isfile(historical_path):
+            logger.debug('Opening historical data')
+            historical_df = open_excel(historical_path)
+        else:
+            historical_df = pd.DataFrame(columns=['date_created', 'item_id', 'reason', 'external_reference', 'SKU',
+                                                  'operation_id', 'status', 'status_detail', 'operation_type',
+                                                  'transaction_amount', 'marketplace_fee', 'shipping_cost',
+                                                  'coupon_fee', 'net_received_amount', 'payment_type',
+                                                  'amount_refunded', 'order_id', 'shipment_status', 'time_created',
+                                                  'file_date', 'quantity', 'taxes_head', 'marketplace'])
         for file in files_to_load:
             logger.debug(f'Processing {file} file')
             try:
                 if file.split('.')[-1] == 'xlsx':
-                    if file.startswith(files_names_start_list[3]):
+                    if file.startswith(files_names_start_list[3]) or file.startswith(files_names_start_list[2]):
                         temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=3)
                     else:
                         temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl')
@@ -222,41 +268,113 @@ def main():
                 if file.startswith(files_names_start_list[0]):
                     file_date = datetime.strptime(re.findall(r'-([0-9]{14})-', file)[0], '%Y%m%d%H%M%S')
                     date = file_date.strftime('%Y%m%d')
-                    activities_collection = get_activities_df(temp, file_date)
+                    temp = indentify_new_sales(historical_df, temp, 'external_reference',
+                                               'Código de referencia (external_reference)')
+                    if c_activities == 0:
+                        activities_collection = get_activities_df(temp, file_date)
+                    else:
+                        activities_collection = pd.concat([activities_collection, get_activities_df(temp, file_date)],
+                                                          axis=0)
+                    c_activities += 1
                     activities = True
+                    archive = True
                 elif file.startswith(files_names_start_list[1]):
                     date = datetime.strptime(''.join(re.findall(r'-([0-9]{4})-([0-9]{2})-([0-9]{1,2})', file)[0]),
                                              '%Y%m%d').strftime('%Y%m%d')
-                    settlement_report = temp
+                    temp = temp.astype({'SOURCE_ID': object, 'EXTERNAL_REFERENCE': object,
+                                        'ORDER_ID': object, 'SHIPPING_ID': object})
+                    temp = indentify_new_sales(historical_df, temp, 'operation_id', 'SOURCE_ID')
+                    if c_settle == 0:
+                        settlement_report = temp
+                    else:
+                        settlement_report = pd.concat([settlement_report, temp], axis=0)
+                    c_settle += 1
                     settlement = True
+                    archive = True
                 elif file.startswith(files_names_start_list[2]):
                     date = datetime.strptime(''.join(re.findall(r'_([0-9]{1,2})-([0-9]{2})-([0-9]{4})_', file)[0]),
                                              '%d%m%Y').strftime('%Y%m%d')
+                    temp.rename(columns={'Código ML': 'ml_code', 'ID de publicación': 'MCO'}, inplace=True)
+                    temp = temp.astype({'MCO': object})
                     stock_general_full = temp
                     stock_full = True
+                    archive = True
                 elif file.startswith(files_names_start_list[3]):
-                    date = re.findall(r'_([0-9]{1,2})_de_([a-z]{3,10})_de_([0-9]{4})',file)[0]
+                    date = re.findall(r'_([0-9]{1,2})_de_([a-z]{3,10})_de_([0-9]{4})', file)[0]
                     date = datetime.strptime(date[2]+month_dict[date[1]]+date[0], '%Y%m%d').strftime('%Y%m%d')
-                    ventas_co = temp
+                    temp = temp.astype({'# de venta': object, '# de publicación': object})
+                    if c_sales == 0:
+                        ventas_co = temp
+                    else:
+                        ventas_co = pd.concat([ventas_co, temp], axis=0)
+                    c_sales += 1
                     ventas = True
+                    archive = True
+                elif file.startswith(files_names_start_list[4]):
+                    temp = temp.astype({'CÓD ML': object, '# Producto': object})
+                    stock_casa_df = temp
+                    stock_casa = True
+                    archive = False
 
-                # Moving the current file to an archive
-                archive(input_files_path, archive_path, date, file)
+                # Moving the current file to an archive except for the house inventory file
+                if archive:
+                    logger.debug(f'Moving the file {file} to the archive')
+                    do_archive(input_files_path, archive_path, date, file)
 
             except Exception as ex:
+                logger.error(ex)
                 logger.error(traceback.format_exc())
 
         try:
-            logger.debug('Populating the missing marketplace fees')
-            activities_collection = populate_missing_fields(activities_collection, settlement_report)
-            logger.debug('Adding the quantities sold for each product')
-            activities_collection = add_quantities(activities_collection, ventas_co)
-            logger.debug('Adding the taxes column')
-            activities_collection = add_taxes_col(activities_collection)
-            logger.debug('Generating Auxiliary File')
-            aux_file = generate_aux_file(activities_collection)
-            activities_collection.to_excel('main_data.xlsx', index=False)
-            aux_file.to_excel('consolidated_data.xlsx', index=False)
+            logger.debug(f'There are {len(activities_collection)} records to be added')
+            if len(activities_collection) > 0:
+                if activities and settlement and ventas:
+                    logger.debug('Populating the missing marketplace fees')
+                    activities_collection = populate_missing_fields(activities_collection, settlement_report)
+                    logger.debug('Adding the quantities sold for each product')
+                    activities_collection = add_quantities(activities_collection, ventas_co)
+                    logger.debug('Adding the taxes column')
+                    activities_collection = add_taxes_col(activities_collection)
+                    logger.debug('Fixing the refunded values')
+                    activities_collection = fix_refunded_sales(activities_collection)
+                    activities_collection['item_id'] = activities_collection['item_id'].apply(lambda x: x.strip('MCO'))
+                    logger.debug('Generating Auxiliary File')
+                    aux_data = generate_aux_data(activities_collection)
+
+                    # Inserting new sales into the historical data files
+                    main_data = pd.concat([historical_df, activities_collection], axis=0).reset_index(drop=True)
+                    if os.path.isdir(consolidated_path):
+                        historical_consolidated = open_excel(consolidated_path)
+                    else:
+                        historical_consolidated = pd.DataFrame(columns=['date_created', 'item_id', 'reason',
+                                                                        'external_reference', 'SKU', 'operation_id',
+                                                                        'status', 'status_detail', 'operation_type',
+                                                                        'amount', 'payment_type', 'order_id',
+                                                                        'shipment_status', 'time_created', 'file_date',
+                                                                        'quantity', 'transaction_type', 'marketplace'
+                                                                        ])
+                    consolidated_data = pd.concat([historical_consolidated, aux_data], axis=0).reset_index(drop=True)
+                    # Saving the files with the new data added
+                    main_data.to_excel(historical_path, index=False, sheet_name='main')
+                    consolidated_data.to_excel('consolidated_data.xlsx', index=False, sheet_name='consolidated')
+                else:
+                    logger.info('Some of the sales data are missing in the input files path')
+            else:
+                logger.info('There is no new data to add')
+
+            if stock_casa and stock_full:
+                logger.debug('Processing inventory files')
+                inventory = stock_casa_df.merge(how='left',
+                                                right=stock_general_full.loc[:, ['ml_code', 'Stock total almacenado']],
+                                                left_on=['CÓD ML'],
+                                                right_on=['ml_code']
+                                                )
+                inventory['Stock total almacenado'].fillna(value=0, inplace=True)
+                inventory['Total'] = inventory['Stock total almacenado'] + inventory['INVENTARIO CASA']
+                inventory.drop(columns=['ml_code'], inplace=True)
+                inventory.to_excel(inventory_path, index=False)
+            else:
+                logger.info('Some of the inventory files is missing')
 
         except Exception as ex:
             logger.error(ex)
