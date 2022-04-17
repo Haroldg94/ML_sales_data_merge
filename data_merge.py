@@ -3,6 +3,7 @@ import os
 import re
 from fnmatch import fnmatch
 from datetime import datetime
+from datetime import timedelta
 import traceback
 import logging
 import shutil
@@ -172,7 +173,7 @@ def do_archive(input_files_path, archive_path, file_date, file_name):
 
 
 def open_excel(excel_path):
-    saved_data = pd.read_excel(excel_path)
+    saved_data = pd.read_excel(excel_path, engine='openpyxl')
     return saved_data
 
 
@@ -204,6 +205,7 @@ def main():
     c_activities = 0
     c_settle = 0
     c_sales = 0
+    days_of_sales = 30
     activities = False
     ventas = False
     settlement = False
@@ -372,7 +374,40 @@ def main():
                 inventory['Stock total almacenado'].fillna(value=0, inplace=True)
                 inventory['Total'] = inventory['Stock total almacenado'] + inventory['INVENTARIO CASA']
                 inventory.drop(columns=['ml_code'], inplace=True)
-                inventory.to_excel(inventory_path, index=False)
+
+                # Get the sales from the historic file
+                sales_hist = open_excel(historical_path)
+                sales_hist.sort_values(by='date_created', ascending=False, inplace=True)
+                # Merging the historic sales with the last sales dates
+                last_sales_df = sales_hist
+                last_sales_df = last_sales_df.merge(how='left', right=last_sales_df.loc[
+                    ~last_sales_df.duplicated(subset=['SKU']), ['SKU', 'date_created']], on='SKU')
+                last_sales_df.rename(columns={'date_created_x': 'date_created', 'date_created_y': 'date_last_sale'},
+                                     inplace=True)
+                last_sales_df['start_date_range'] = last_sales_df['date_last_sale'] - timedelta(days_of_sales)
+                sales_range_df = last_sales_df.loc[(last_sales_df['start_date_range'] <= last_sales_df['date_created'])
+                                                   & (last_sales_df['date_last_sale'] >= last_sales_df['date_created']),
+                                 :]
+                sales_range_df.to_excel('sales_range_df.xlsx')
+                sold_units = sales_range_df.groupby(['SKU'])['quantity'].sum().reset_index()
+                sold_units.to_excel('sold_units.xlsx')
+                inventory = inventory.merge(how='left', right=sold_units, left_on='CÓD ML', right_on='SKU')
+                inventory.rename(columns={'quantity': 'units_sold'}, inplace=True)
+                inventory.drop(columns=['SKU'], inplace=True)
+                inventory['units_sold'].fillna(0, inplace=True)
+                inventory = inventory.merge(how='left', right=sales_range_df.loc[~sales_range_df.duplicated(
+                    subset=['SKU']), ['SKU', 'date_last_sale', 'start_date_range']], left_on='CÓD ML', right_on='SKU')
+                inventory.drop(columns=['SKU'], inplace=True)
+                # Adding aditional variables to the table
+                inventory['daily_avg'] = inventory['units_sold']/30
+                inventory.loc[inventory['daily_avg'] != 0,
+                              'days_of_inv'] = inventory.loc[inventory['daily_avg'] != 0, 'Total']/\
+                                               inventory.loc[inventory['daily_avg'] != 0, 'daily_avg']
+                logger.debug(inventory.dtypes)
+                inventory.loc[(inventory['daily_avg'] == 0) & (inventory['Total'] == 0), 'days_of_inv'] = 0
+                inventory.loc[(inventory['daily_avg'] == 0) & (inventory['Total'] != 0), 'days_of_inv'] = 1000
+                inventory['60_days_inv'] = inventory['daily_avg'] * 60.0
+                inventory.to_excel(inventory_path, index=False, sheet_name='inventory')
             else:
                 logger.info('Some of the inventory files is missing')
 
