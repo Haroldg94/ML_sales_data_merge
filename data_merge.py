@@ -50,9 +50,7 @@ def get_activities_df(df, file_date):
     df['time_created'] = df['date_created'].dt.time
     df['date_created'] = df['date_created'].dt.date
     df['file_date'] = file_date.date()
-    df['marketplace'] = 'Mercadolibre'
-    df = df.astype({'external_reference': object, 'item_id': object, 'SKU': object, 'operation_id': object,
-                    'order_id': object})
+    df = df.astype({'external_reference': object, 'item_id': object, 'SKU': object, 'operation_id': object})
     return df
 
 
@@ -123,6 +121,7 @@ def add_quantities(main_df, support_df):
     main_df.rename(columns={'Unidades': 'quantity'}, inplace=True)
     main_df['quantity'].fillna(value=0, inplace=True)
 
+
     return main_df
 
 
@@ -168,6 +167,11 @@ def do_archive(input_files_path, archive_path, file_date, file_name):
     if not os.path.isdir(destination_folder_path):
         os.mkdir(destination_folder_path)
 
+    if os.path.isfile(os.path.join(destination_folder_path, file_name)):
+        logger.debug(f'The file "{file_name}" already exist in the destination folder')
+        logger.debug(f'overwriting file "{file_name}"...')
+        os.remove(os.path.join(destination_folder_path, file_name))
+
     shutil.copy(os.path.join(input_files_path, file_name), destination_folder_path)
     #shutil.move(os.path.join(input_files_path, file_name), destination_folder_path)
 
@@ -180,6 +184,20 @@ def open_excel(excel_path):
 def indentify_new_sales(historical_df, new_df, src_col, trg_col):
     new_df = new_df.loc[~new_df[trg_col].isin(historical_df[src_col]), :]
     return new_df
+
+
+def get_marketplace(main_df, support_df):
+    # Merging our main dataframe with the sales dataframe to get the marketplace in each sale
+    main_df = main_df.merge(right=support_df.loc[:, ['# de venta', '# de publicación', 'Canal de venta']],
+                            how='left',
+                            left_on=['order_id', 'item_id'],
+                            right_on=['# de venta', '# de publicación'])
+    # Dropping the support columns
+    main_df.drop(columns=['# de venta', '# de publicación'], inplace=True)
+    # Renaming the marketplace column and filling the null values
+    main_df.rename(columns={'Canal de venta': 'marketplace'}, inplace=True)
+    main_df['marketplace'].fillna(value='Mercado Libre', inplace=True)
+    return main_df
 
 
 def fix_refunded_sales(df):
@@ -206,6 +224,7 @@ def main():
     c_settle = 0
     c_sales = 0
     days_of_sales = 30
+    order_lead_time = 20
     activities = False
     ventas = False
     settlement = False
@@ -228,7 +247,7 @@ def main():
         'diciembre': '12'
     }
 
-    files_names_start = {'activities-collection': 'xlsx',
+    files_names_start = {'activities-collection': 'csv',
                          'settlement-report': 'xlsx',
                          'Stock_general_Full': 'xlsx',
                          'Ventas_CO': 'xlsx',
@@ -264,7 +283,7 @@ def main():
                     else:
                         temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl')
                 elif file.split('.')[-1] == 'csv':
-                    temp = pd.read_csv(os.path.join(input_files_path, file))
+                    temp = pd.read_csv(os.path.join(input_files_path, file), sep=';')
 
                 # Assigning the temp dataframe to the corresponding dataframe considering the filename
                 if file.startswith(files_names_start_list[0]):
@@ -335,6 +354,8 @@ def main():
                     activities_collection = populate_missing_fields(activities_collection, settlement_report)
                     logger.debug('Adding the quantities sold for each product')
                     activities_collection = add_quantities(activities_collection, ventas_co)
+                    logger.debug('Getting the Marketplace name')
+                    activities_collection = get_marketplace(activities_collection, ventas_co)
                     logger.debug('Adding the taxes column')
                     activities_collection = add_taxes_col(activities_collection)
                     logger.debug('Fixing the refunded values')
@@ -357,8 +378,10 @@ def main():
                                                                         ])
                     consolidated_data = pd.concat([historical_consolidated, aux_data], axis=0).reset_index(drop=True)
                     # Saving the files with the new data added
+                    logger.debug('Saving sales files...')
                     main_data.to_excel(historical_path, index=False, sheet_name='main')
                     consolidated_data.to_excel('consolidated_data.xlsx', index=False, sheet_name='consolidated')
+                    logger.debug('Saving sales files process finished')
                 else:
                     logger.info('Some of the sales data are missing in the input files path')
             else:
@@ -388,9 +411,7 @@ def main():
                 sales_range_df = last_sales_df.loc[(last_sales_df['start_date_range'] <= last_sales_df['date_created'])
                                                    & (last_sales_df['date_last_sale'] >= last_sales_df['date_created']),
                                  :]
-                sales_range_df.to_excel('sales_range_df.xlsx')
                 sold_units = sales_range_df.groupby(['SKU'])['quantity'].sum().reset_index()
-                sold_units.to_excel('sold_units.xlsx')
                 inventory = inventory.merge(how='left', right=sold_units, left_on='CÓD ML', right_on='SKU')
                 inventory.rename(columns={'quantity': 'units_sold'}, inplace=True)
                 inventory.drop(columns=['SKU'], inplace=True)
@@ -398,16 +419,49 @@ def main():
                 inventory = inventory.merge(how='left', right=sales_range_df.loc[~sales_range_df.duplicated(
                     subset=['SKU']), ['SKU', 'date_last_sale', 'start_date_range']], left_on='CÓD ML', right_on='SKU')
                 inventory.drop(columns=['SKU'], inplace=True)
-                # Adding aditional variables to the table
+                logger.debug('Adding additional variables to the inventory table')
+                # Adding additional variables to the inventory table
                 inventory['daily_avg'] = inventory['units_sold']/30
                 inventory.loc[inventory['daily_avg'] != 0,
                               'days_of_inv'] = inventory.loc[inventory['daily_avg'] != 0, 'Total']/\
                                                inventory.loc[inventory['daily_avg'] != 0, 'daily_avg']
-                logger.debug(inventory.dtypes)
                 inventory.loc[(inventory['daily_avg'] == 0) & (inventory['Total'] == 0), 'days_of_inv'] = 0
-                inventory.loc[(inventory['daily_avg'] == 0) & (inventory['Total'] != 0), 'days_of_inv'] = 1000
+                inventory.loc[(inventory['daily_avg'] == 0) & (inventory['Total'] != 0), 'days_of_inv'] = 365
+                inventory['days_of_inv'] = inventory['days_of_inv'].apply(lambda x: x if x <= 365 else 365)
                 inventory['60_days_inv'] = inventory['daily_avg'] * 60.0
+                inventory['sales_until_arrival'] = inventory['daily_avg'] * order_lead_time
+                inventory['units_avl_lt'] = inventory['Total'] - inventory['sales_until_arrival']
+                inventory.loc[inventory['units_avl_lt'] > 0,
+                              'suggested_order'] = inventory.loc[inventory['units_avl_lt'] > 0, '60_days_inv']\
+                                                   - inventory.loc[inventory['units_avl_lt'] > 0,'units_avl_lt']
+                inventory.loc[inventory['units_avl_lt'] <= 0,
+                              'suggested_order'] = inventory.loc[inventory['units_avl_lt'] <= 0, '60_days_inv']
+                inventory['suggested_order'] = inventory['suggested_order'].apply(lambda x: x if x > 0 else 0)
+                inventory['inventory_time_group'] = inventory.apply(lambda x: 'agotado' if x.days_of_inv == 0
+                                                  else ('0 - 7 días' if x.days_of_inv <= 7
+                                                        else ('7 - 15 días' if (x.days_of_inv > 7)
+                                                                               and (x.days_of_inv <= 15)
+                                                              else ('15 - 30 días' if (x.days_of_inv > 15)
+                                                                                   and (x.days_of_inv <= 30)
+                                                                    else( '1 - 2 meses' if (x.days_of_inv > 30)
+                                                                                        and (x.days_of_inv <= 60)
+                                                                          else('2 - 3 meses' if (x.days_of_inv > 60)
+                                                                                             and (x.days_of_inv <= 90)
+                                                                               else('3 - 6 meses' if (x.days_of_inv
+                                                                                                      > 90)
+                                                                                                     and (x.days_of_inv
+                                                                                                          <= 180)
+                                                                                    else '> 6 meses'
+                                                                               )
+                                                                          )
+                                                                    )
+                                                              )
+                                                        )
+                                                  )
+                , axis=1)
+                logger.debug('Saving inventory file...')
                 inventory.to_excel(inventory_path, index=False, sheet_name='inventory')
+                logger.debug('Saving inventory file process finished')
             else:
                 logger.info('Some of the inventory files is missing')
 
