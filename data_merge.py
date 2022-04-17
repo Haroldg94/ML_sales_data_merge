@@ -12,7 +12,7 @@ import shutil
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 formater = logging.Formatter('[%(asctime)s] - %(levelname)s - %(message)s')
-fh = logging.FileHandler('data_processing.log', mode='w')
+fh = logging.FileHandler('data_processing.log')# , mode='w')
 fh.setFormatter(formater)
 logger.addHandler(fh)
 
@@ -172,8 +172,8 @@ def do_archive(input_files_path, archive_path, file_date, file_name):
         logger.debug(f'overwriting file "{file_name}"...')
         os.remove(os.path.join(destination_folder_path, file_name))
 
-    shutil.copy(os.path.join(input_files_path, file_name), destination_folder_path)
-    #shutil.move(os.path.join(input_files_path, file_name), destination_folder_path)
+    #shutil.copy(os.path.join(input_files_path, file_name), destination_folder_path)
+    shutil.move(os.path.join(input_files_path, file_name), destination_folder_path)
 
 
 def open_excel(excel_path):
