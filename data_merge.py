@@ -332,7 +332,10 @@ def main():
                     ventas = True
                     archive = True
                 elif file.startswith(files_names_start_list[4]):
-                    temp = temp.astype({'CÓD ML': object, '# Producto': object})
+                    temp = temp[['CÓD ML / SKU', '# Publicacion', 'Provider', 'Title', 'Referencia',
+                                 'Detalle', 'Estado', 'Inventario CASA']]
+                    temp.rename(columns={'CÓD ML / SKU': 'SKU'}, inplace=True)
+                    temp = temp.astype({'SKU': object, '# Publicacion': object})
                     stock_casa_df = temp
                     stock_casa = True
                     archive = False
@@ -391,11 +394,11 @@ def main():
                 logger.debug('Processing inventory files')
                 inventory = stock_casa_df.merge(how='left',
                                                 right=stock_general_full.loc[:, ['ml_code', 'Stock total almacenado']],
-                                                left_on=['CÓD ML'],
+                                                left_on=['SKU'],
                                                 right_on=['ml_code']
                                                 )
                 inventory['Stock total almacenado'].fillna(value=0, inplace=True)
-                inventory['Total'] = inventory['Stock total almacenado'] + inventory['INVENTARIO CASA']
+                inventory['Total'] = inventory['Stock total almacenado'] + inventory['Inventario CASA']
                 inventory.drop(columns=['ml_code'], inplace=True)
 
                 # Get the sales from the historic file
@@ -412,13 +415,11 @@ def main():
                                                    & (last_sales_df['date_last_sale'] >= last_sales_df['date_created']),
                                  :]
                 sold_units = sales_range_df.groupby(['SKU'])['quantity'].sum().reset_index()
-                inventory = inventory.merge(how='left', right=sold_units, left_on='CÓD ML', right_on='SKU')
+                inventory = inventory.merge(how='left', right=sold_units, left_on='SKU', right_on='SKU')
                 inventory.rename(columns={'quantity': 'units_sold'}, inplace=True)
-                inventory.drop(columns=['SKU'], inplace=True)
                 inventory['units_sold'].fillna(0, inplace=True)
                 inventory = inventory.merge(how='left', right=sales_range_df.loc[~sales_range_df.duplicated(
-                    subset=['SKU']), ['SKU', 'date_last_sale', 'start_date_range']], left_on='CÓD ML', right_on='SKU')
-                inventory.drop(columns=['SKU'], inplace=True)
+                    subset=['SKU']), ['SKU', 'date_last_sale', 'start_date_range']], left_on='SKU', right_on='SKU')
                 logger.debug('Adding additional variables to the inventory table')
                 # Adding additional variables to the inventory table
                 inventory['daily_avg'] = inventory['units_sold']/30
