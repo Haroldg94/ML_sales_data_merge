@@ -64,10 +64,11 @@ def get_idx_list(df):
 
 def populate_missing_fields(main_df, support_df):
     # Populate the missing marketplace fee amount on the main_df using the support_df and fix the net received amount
-    df_filter = (main_df['marketplace_fee'] == 0) & (main_df['operation_type'] != 'shipping')
     supp_df_cols = ['SOURCE_ID', 'FEE_AMOUNT', 'SETTLEMENT_NET_AMOUNT']
-    main_df = main_df.merge(right=support_df.loc[support_df['TRANSACTION_TYPE'] != 'REFUND', supp_df_cols],
+    main_df = main_df.merge(right=support_df.loc[(support_df['TRANSACTION_TYPE'] != 'REFUND')
+                                                 & (support_df['TRANSACTION_TYPE'] != 'REFUND_SHIPPING'), supp_df_cols],
                             how='left', left_on='operation_id', right_on='SOURCE_ID')
+    df_filter = (main_df['marketplace_fee'] == 0) & (main_df['operation_type'] != 'shipping')
     main_df.loc[df_filter, 'net_received_amount'] = main_df.loc[df_filter, 'SETTLEMENT_NET_AMOUNT']
     main_df.loc[df_filter, 'marketplace_fee'] = main_df.loc[df_filter, 'FEE_AMOUNT'] * -1
     # Populating the missing shipping cost paid by the seller
@@ -261,7 +262,7 @@ def main():
                      if f.startswith(n) and (fnmatch(f, f'*.{files_names_start[n]}'))]
     print(f'files_to_load: {files_to_load}')
 
-    logger.debug(f'Found {len(files_to_load)} files to process')
+    logger.debug(f'Found {len(files_to_load)} files to process: {files_to_load}')
     if len(files_to_load) > 0:
         files_names_start_list = list(files_names_start.keys())
         if os.path.isfile(historical_path):
@@ -278,8 +279,12 @@ def main():
             logger.debug(f'Processing {file} file')
             try:
                 if file.split('.')[-1] == 'xlsx':
-                    if file.startswith(files_names_start_list[3]) or file.startswith(files_names_start_list[2]):
+                    if file.startswith(files_names_start_list[2]):
                         temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=3)
+                    elif file.startswith(files_names_start_list[3]):
+                        temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=2)
+                        if '# de venta' not in temp.columns:
+                            temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=3)
                     else:
                         temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl')
                 elif file.split('.')[-1] == 'csv':
