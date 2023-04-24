@@ -368,7 +368,7 @@ def main():
                     activities_collection = add_taxes_col(activities_collection)
                     logger.debug('Fixing the refunded values')
                     activities_collection = fix_refunded_sales(activities_collection)
-                    activities_collection['item_id'] = activities_collection['item_id'].apply(lambda x: x.strip('MCO'))
+                    activities_collection['item_id'] = activities_collection['item_id'].apply(lambda x: str(x).strip('MCO'))
                     logger.debug('Generating Auxiliary File')
                     aux_data = generate_aux_data(activities_collection)
 
