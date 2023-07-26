@@ -374,7 +374,7 @@ def main():
 
                     # Inserting new sales into the historical data files
                     main_data = pd.concat([historical_df, activities_collection], axis=0).reset_index(drop=True)
-                    if os.path.isdir(consolidated_path):
+                    if os.path.isfile(consolidated_path):
                         historical_consolidated = open_excel(consolidated_path)
                     else:
                         historical_consolidated = pd.DataFrame(columns=['date_created', 'item_id', 'reason',
