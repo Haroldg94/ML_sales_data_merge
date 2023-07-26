@@ -122,7 +122,6 @@ def add_quantities(main_df, support_df):
     main_df.rename(columns={'Unidades': 'quantity'}, inplace=True)
     main_df['quantity'].fillna(value=0, inplace=True)
 
-
     return main_df
 
 
@@ -177,8 +176,11 @@ def do_archive(input_files_path, archive_path, file_date, file_name):
     shutil.move(os.path.join(input_files_path, file_name), destination_folder_path)
 
 
-def open_excel(excel_path):
-    saved_data = pd.read_excel(excel_path, engine='openpyxl')
+def open_excel(excel_path, skiprows=0, dtypes=None):
+    if dtypes is None:
+        saved_data = pd.read_excel(excel_path, engine='openpyxl', skiprows=skiprows)
+    else:
+        saved_data = pd.read_excel(excel_path, engine='openpyxl', skiprows=skiprows, dtype=dtypes)
     return saved_data
 
 
@@ -206,6 +208,34 @@ def fix_refunded_sales(df):
            ['marketplace_fee', 'shipping_cost', 'coupon_fee', 'net_received_amount', 'taxes_head']] = 0
     df.loc[df['amount_refunded'] != 0, 'amount_refunded'] = df.loc[df['amount_refunded'] != 0, 'transaction_amount']
     return df
+
+
+def import_file(file, files_names_start_list, input_files_path, dtypes=None):
+    if dtypes is None:
+        if file.split('.')[-1] == 'xlsx':
+            if file.startswith(files_names_start_list[2]):
+                import_df = open_excel(os.path.join(input_files_path, file), skiprows=3)
+            elif file.startswith(files_names_start_list[3]):
+                import_df = open_excel(os.path.join(input_files_path, file), skiprows=2)
+                if '# de venta' not in import_df.columns:
+                    import_df = open_excel(os.path.join(input_files_path, file), skiprows=3)
+            else:
+                import_df = open_excel(os.path.join(input_files_path, file))
+        elif file.split('.')[-1] == 'csv':
+            import_df = pd.read_csv(os.path.join(input_files_path, file), sep=';')
+    else:
+        if file.split('.')[-1] == 'xlsx':
+            if file.startswith(files_names_start_list[2]):
+                import_df = open_excel(os.path.join(input_files_path, file), skiprows=3, dtypes=dtypes)
+            elif file.startswith(files_names_start_list[3]):
+                import_df = open_excel(os.path.join(input_files_path, file), skiprows=2, dtypes=dtypes)
+                if '# de venta' not in import_df.columns:
+                    import_df = open_excel(os.path.join(input_files_path, file), skiprows=3, dtypes=dtypes)
+            else:
+                import_df = open_excel(os.path.join(input_files_path, file), dtypes=dtypes)
+        elif file.split('.')[-1] == 'csv':
+            import_df = pd.read_csv(os.path.join(input_files_path, file), sep=';', dtype=dtypes)
+    return import_df
 
 
 def main():
@@ -265,35 +295,34 @@ def main():
     logger.debug(f'Found {len(files_to_load)} files to process: {files_to_load}')
     if len(files_to_load) > 0:
         files_names_start_list = list(files_names_start.keys())
+        main_dtypes = {'item_id': str,
+                       'external_reference': str,
+                       'operation_id': str,
+                       'order_id': str
+                       }
         if os.path.isfile(historical_path):
             logger.debug('Opening historical data')
-            historical_df = open_excel(historical_path)
+            historical_df = open_excel(historical_path, dtypes=main_dtypes)
         else:
             historical_df = pd.DataFrame(columns=['date_created', 'item_id', 'reason', 'external_reference', 'SKU',
                                                   'operation_id', 'status', 'status_detail', 'operation_type',
                                                   'transaction_amount', 'marketplace_fee', 'shipping_cost',
                                                   'coupon_fee', 'net_received_amount', 'payment_type',
                                                   'amount_refunded', 'order_id', 'shipment_status', 'time_created',
-                                                  'file_date', 'quantity', 'taxes_head', 'marketplace'])
+                                                  'file_date', 'quantity', 'marketplace', 'taxes_head'])
         for file in files_to_load:
             logger.debug(f'Processing {file} file')
             try:
-                if file.split('.')[-1] == 'xlsx':
-                    if file.startswith(files_names_start_list[2]):
-                        temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=3)
-                    elif file.startswith(files_names_start_list[3]):
-                        temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=2)
-                        if '# de venta' not in temp.columns:
-                            temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl', skiprows=3)
-                    else:
-                        temp = pd.read_excel(os.path.join(input_files_path, file), engine='openpyxl')
-                elif file.split('.')[-1] == 'csv':
-                    temp = pd.read_csv(os.path.join(input_files_path, file), sep=';')
-
                 # Assigning the temp dataframe to the corresponding dataframe considering the filename
                 if file.startswith(files_names_start_list[0]):
+                    dtypes = {'Identificador de producto (item_id)': str,
+                              'Código de referencia (external_reference)': str,
+                              'Número de operación de Mercado Pago (operation_id)': str,
+                              'Número de venta en Mercado Libre (order_id)': str
+                              }
                     file_date = datetime.strptime(re.findall(r'-([0-9]{14})-', file)[0], '%Y%m%d%H%M%S')
                     date = file_date.strftime('%Y%m%d')
+                    temp = import_file(file, files_names_start_list, input_files_path, dtypes)
                     temp = indentify_new_sales(historical_df, temp, 'external_reference',
                                                'Código de referencia (external_reference)')
                     if c_activities == 0:
@@ -305,10 +334,14 @@ def main():
                     activities = True
                     archive = True
                 elif file.startswith(files_names_start_list[1]):
+                    dtypes = {'SOURCE_ID': str,
+                              'EXTERNAL_REFERENCE': str,
+                              'ORDER_ID': str,
+                              'SHIPPING_ID': str
+                              }
                     date = datetime.strptime(''.join(re.findall(r'-([0-9]{4})-([0-9]{2})-([0-9]{1,2})', file)[0]),
                                              '%Y%m%d').strftime('%Y%m%d')
-                    temp = temp.astype({'SOURCE_ID': object, 'EXTERNAL_REFERENCE': object,
-                                        'ORDER_ID': object, 'SHIPPING_ID': object})
+                    temp = import_file(file, files_names_start_list, input_files_path, dtypes)
                     temp = indentify_new_sales(historical_df, temp, 'operation_id', 'SOURCE_ID')
                     if c_settle == 0:
                         settlement_report = temp
@@ -318,17 +351,20 @@ def main():
                     settlement = True
                     archive = True
                 elif file.startswith(files_names_start_list[2]):
+                    dtypes = {'ID de publicación': str}
                     date = datetime.strptime(''.join(re.findall(r'_([0-9]{1,2})-([0-9]{2})-([0-9]{4})_', file)[0]),
                                              '%d%m%Y').strftime('%Y%m%d')
+                    temp = import_file(file, files_names_start_list, input_files_path, dtypes)
                     temp.rename(columns={'Código ML': 'ml_code', 'ID de publicación': 'MCO'}, inplace=True)
-                    temp = temp.astype({'MCO': object})
                     stock_general_full = temp
                     stock_full = True
                     archive = True
                 elif file.startswith(files_names_start_list[3]):
+                    dtypes = {'# de venta': str,
+                              '# de publicación': str}
                     date = re.findall(r'_([0-9]{1,2})_de_([a-z]{3,10})_de_([0-9]{4})', file)[0]
                     date = datetime.strptime(date[2]+month_dict[date[1]]+date[0], '%Y%m%d').strftime('%Y%m%d')
-                    temp = temp.astype({'# de venta': object, '# de publicación': object})
+                    temp = import_file(file, files_names_start_list, input_files_path, dtypes)
                     if c_sales == 0:
                         ventas_co = temp
                     else:
@@ -337,10 +373,12 @@ def main():
                     ventas = True
                     archive = True
                 elif file.startswith(files_names_start_list[4]):
+                    dtypes = {'CÓD ML / SKU': str,
+                              '# Publicacion': str}
+                    temp = import_file(file, files_names_start_list, input_files_path, dtypes)
                     temp = temp[['CÓD ML / SKU', '# Publicacion', 'Provider', 'Title', 'Referencia',
                                  'Detalle', 'Estado', 'Inventario CASA']]
                     temp.rename(columns={'CÓD ML / SKU': 'SKU'}, inplace=True)
-                    temp = temp.astype({'SKU': object, '# Publicacion': object})
                     stock_casa_df = temp
                     stock_casa = True
                     archive = False
@@ -372,10 +410,14 @@ def main():
                     logger.debug('Generating Auxiliary File')
                     aux_data = generate_aux_data(activities_collection)
 
+                    # Re-ordering de columns before concatenating it with the historical data
+                    activities_collection = activities_collection[historical_df.columns.tolist()]
+                    # Assigning the dtypes from activities_collection to the historical df
+                    historical_df = historical_df.astype(activities_collection.dtypes)
                     # Inserting new sales into the historical data files
                     main_data = pd.concat([historical_df, activities_collection], axis=0).reset_index(drop=True)
                     if os.path.isfile(consolidated_path):
-                        historical_consolidated = open_excel(consolidated_path)
+                        historical_consolidated = open_excel(consolidated_path, dtypes=main_dtypes)
                     else:
                         historical_consolidated = pd.DataFrame(columns=['date_created', 'item_id', 'reason',
                                                                         'external_reference', 'SKU', 'operation_id',
@@ -384,6 +426,7 @@ def main():
                                                                         'shipment_status', 'time_created', 'file_date',
                                                                         'quantity', 'transaction_type', 'marketplace'
                                                                         ])
+                    historical_consolidated = historical_consolidated.astype(aux_data.dtypes)
                     consolidated_data = pd.concat([historical_consolidated, aux_data], axis=0).reset_index(drop=True)
                     # Saving the files with the new data added
                     logger.debug('Saving sales files...')
@@ -407,7 +450,7 @@ def main():
                 inventory.drop(columns=['ml_code'], inplace=True)
 
                 # Get the sales from the historic file
-                sales_hist = open_excel(historical_path)
+                sales_hist = open_excel(historical_path, dtypes=main_dtypes)
                 sales_hist.sort_values(by='date_created', ascending=False, inplace=True)
                 # Merging the historic sales with the last sales dates
                 last_sales_df = sales_hist
